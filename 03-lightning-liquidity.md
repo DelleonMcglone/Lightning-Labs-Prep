@@ -48,8 +48,7 @@ at creation** — a 10 BTC channel can facilitate at most a 10 BTC transfer, for
 
 ### How liquidity shifts as you receive
 
-> *Diagram would go here: a channel bar showing capacity sliding from the peer's side to
-> the merchant's side as payments are received.*
+![Lightning channel liquidity: a fixed channel capacity splitting into inbound and outbound, shifting as Alice receives payments](./diagrams/lightning-liquidity.svg)
 
 Bob opens a channel to Alice for 10,000,000 satoshis (0.1 BTC). The total capacity is
 **0.1 BTC forever** (though Bob could open another channel later).
