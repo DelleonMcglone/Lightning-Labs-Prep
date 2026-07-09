@@ -62,7 +62,7 @@ Long-form articles explaining what I've learned:
 - [ ] **Foundations** — Bitcoin, Lightning, and liquidity notes published
 - [ ] **Environment** — Bitcoin Core + LND running and synced
 - [x] **Pool** — operational locally, connected to LND, first transaction logged
-- [ ] **Source-code analysis** — Pool, LND, Loop, Faraday summaries published
+- [x] **Source-code analysis** — Pool, LND, Loop, Faraday summaries published
 - [x] **Writing** — 3+ technical articles published
 - [ ] **Project** — AI Liquidity Advisor MVP deployed with demo video
 - [ ] **Open source** — 1 merged docs PR, 1 submitted code PR
