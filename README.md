@@ -53,7 +53,8 @@ Long-form articles explaining what I've learned:
 ### Project
 
 - **AI Liquidity Advisor** — an LLM-assisted tool that reads node state and
-  recommends liquidity actions. _(separate repo — link to follow)_
+  recommends liquidity actions. [Product & technical spec](./advisor/SPEC.md)
+  published; implementation to live in its own repo _(link to follow)_.
 
 ---
 
