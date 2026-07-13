@@ -17,6 +17,7 @@ from .collectors.lnd_collector import collect_snapshot
 from .config import Settings
 from .lndclient import LndClient, LndClientError
 from .models import NodeSnapshot
+from .signals import NodeSignals, compute_signals
 
 app = typer.Typer(
     add_completion=False,
@@ -114,6 +115,83 @@ def snapshot(
         console.print_json(snap.model_dump_json())
     else:
         _render_snapshot(snap)
+
+
+def _render_signals(sig: NodeSignals) -> None:
+    console.print(
+        Panel(
+            f"inbound [green]{_sats(sig.total_inbound_sat)}[/] · "
+            f"outbound [green]{_sats(sig.total_outbound_sat)}[/] · "
+            f"inbound share [b]{sig.inbound_ratio:.0%}[/]\n"
+            f"{sig.channels_considered}/{sig.channels_total} channels "
+            f"considered for outlier analysis · "
+            f"{sig.channels_one_sided} one-sided · "
+            f"IQR multiplier {sig.outlier_multiplier} · "
+            f"forwarding lookback {sig.forwarding_lookback_days}d",
+            title="📊 Node signals",
+            border_style="cyan",
+        )
+    )
+
+    tbl = Table(title="Per-channel signals", header_style="dim")
+    tbl.add_column("peer", style="blue", no_wrap=True)
+    tbl.add_column("local%", justify="right")
+    tbl.add_column("imbal", justify="right")
+    tbl.add_column("up%", justify="right")
+    tbl.add_column("fwd in/out", justify="right")
+    tbl.add_column("fees (msat)", justify="right")
+    tbl.add_column("rev/cap-day", justify="right")
+    tbl.add_column("flags")
+
+    for s in sig.channels:
+        flags = []
+        if not s.considered:
+            flags.append(f"[dim]excluded: {s.excluded_reason}[/]")
+        if s.one_sided:
+            side = "no inbound" if s.local_ratio > 0.5 else "no outbound"
+            flags.append(f"[yellow]one-sided ({side})[/]")
+        if s.revenue_outlier_low:
+            flags.append("[red]revenue outlier ↓[/]")
+        if s.volume_outlier_low:
+            flags.append("[red]volume outlier ↓[/]")
+        if s.uptime_outlier_low:
+            flags.append("[red]uptime outlier ↓[/]")
+        tbl.add_row(
+            s.peer_pubkey[:16] + "…",
+            f"{s.local_ratio:.0%}",
+            f"{s.imbalance:.2f}",
+            f"{s.uptime_ratio:.0%}",
+            f"{s.forwards_in}/{s.forwards_out}",
+            f"{s.fees_earned_msat:,}",
+            f"{s.revenue_per_capacity_day:.3g}",
+            " ".join(flags) or "[green]ok[/]",
+        )
+    console.print(tbl)
+
+
+@app.command()
+def signals(
+    network: Optional[str] = typer.Option(None, help="bitcoin network"),
+    host: Optional[str] = typer.Option(None, help="lnd gRPC host:port"),
+    multiplier: float = typer.Option(
+        3.0, help="IQR outlier multiplier (1.5 aggressive, 3 cautious)"
+    ),
+    json_out: bool = typer.Option(False, "--json", help="raw JSON output"),
+) -> None:
+    """Compute deterministic liquidity signals from the node (SPEC M1)."""
+    settings = _settings_from_opts(network, host)
+    try:
+        with LndClient(settings) as client:
+            snap = collect_snapshot(client)
+    except LndClientError as exc:
+        err.print(f"[red]error:[/] {exc}")
+        raise typer.Exit(code=1)
+
+    sig = compute_signals(snap, outlier_multiplier=multiplier)
+    if json_out:
+        console.print_json(sig.model_dump_json())
+    else:
+        _render_signals(sig)
 
 
 def _version_callback(value: bool) -> None:

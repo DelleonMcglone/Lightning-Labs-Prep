@@ -10,6 +10,7 @@ def _channel(local: int, remote: int, active: bool = True, **kw) -> ChannelState
     cap = local + remote
     return ChannelState(
         chan_point=kw.get("chan_point", "aa:0"),
+        chan_id=kw.get("chan_id", 1),
         peer_pubkey=kw.get("peer_pubkey", "03abc"),
         capacity_sat=cap,
         local_sat=local,

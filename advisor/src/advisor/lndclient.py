@@ -80,6 +80,26 @@ class LndClient:
     def channel_balance(self) -> ln.ChannelBalanceResponse:
         return self._call(self._stub.ChannelBalance, ln.ChannelBalanceRequest())
 
+    def forwarding_history(self, start_time: int, end_time: int):
+        """All forwarding events in [start_time, end_time) (unix seconds),
+        following lnd's index_offset pagination."""
+        events = []
+        offset = 0
+        while True:
+            resp = self._call(
+                self._stub.ForwardingHistory,
+                ln.ForwardingHistoryRequest(
+                    start_time=start_time,
+                    end_time=end_time,
+                    index_offset=offset,
+                    num_max_events=10_000,
+                ),
+            )
+            events.extend(resp.forwarding_events)
+            if len(resp.forwarding_events) < 10_000:
+                return events
+            offset = resp.last_offset_index
+
     @staticmethod
     def _call(method, request):
         try:

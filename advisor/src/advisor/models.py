@@ -30,6 +30,7 @@ class ChannelState(BaseModel):
     """
 
     chan_point: str
+    chan_id: int  # short channel id; joins to forwarding events
     peer_pubkey: str
     capacity_sat: int
     local_sat: int
@@ -54,6 +55,21 @@ class ChannelState(BaseModel):
         return self.uptime_s / self.lifetime_s if self.lifetime_s else 0.0
 
 
+class ForwardingStats(BaseModel):
+    """Aggregated forwarding activity for one channel over the lookback window.
+
+    A forward touches two channels (in and out); fees are earned on the
+    outgoing side, so ``fee_msat`` is attributed to the outgoing channel.
+    """
+
+    chan_id: int
+    events_in: int = 0
+    events_out: int = 0
+    amt_in_sat: int = 0
+    amt_out_sat: int = 0
+    fee_msat: int = 0
+
+
 class Balances(BaseModel):
     """On-chain and aggregate off-chain balances, in satoshis."""
 
@@ -69,6 +85,9 @@ class NodeSnapshot(BaseModel):
     identity: NodeIdentity
     balances: Balances
     channels: list[ChannelState]
+    # chan_id → forwarding stats over the lookback window (default 30 days).
+    forwarding: dict[int, ForwardingStats] = {}
+    forwarding_lookback_days: int = 30
 
     @computed_field  # type: ignore[prop-decorator]
     @property

@@ -5,18 +5,24 @@ state and gives plain-language, actionable liquidity recommendations. It never
 moves funds.
 
 > Full design in [SPEC.md](./SPEC.md). This is the reference implementation,
-> built milestone by milestone against that spec. **Current status: M0
-> (scaffold + node snapshot).**
+> built milestone by milestone against that spec. **Current status: M1
+> (signal engine).**
 
-## What works today (M0)
+## What works today (M0 + M1)
 
 - Connects to `lnd` over gRPC with a **read-only macaroon** (never `admin`).
-- Collects a typed `NodeSnapshot` — identity, balances, and per-channel
-  inbound/outbound liquidity.
+- Collects a typed `NodeSnapshot` — identity, balances, per-channel
+  inbound/outbound liquidity, and 30-day forwarding history.
 - `advisor snapshot` prints it as a readable report (or `--json`).
+- `advisor signals` computes deterministic liquidity signals: per-channel
+  balance/imbalance, uptime, routing performance normalized per
+  capacity-day, and **Faraday-style IQR outlier flags** (the IQR port is
+  unit-tested against Faraday's own documented example). Private and
+  too-young channels are filtered before statistics, exactly like Faraday.
 
-Signals (M1), market + fee collectors (M2), the recommendation engine (M3), and
-the LLM advisor (M4) follow the [roadmap](./SPEC.md#8-roadmap).
+Market + fee collectors (M2), the recommendation engine (M3), and the LLM
+advisor (M4) follow the [roadmap](./SPEC.md#8-roadmap). The
+[knowledge base](./knowledge/) that M4 will load is drafted.
 
 ## Quickstart
 
@@ -56,11 +62,13 @@ advisor/
 ├── SPEC.md                  design record (requirements, architecture, roadmap)
 ├── proto/lightning.proto    vendored lnd proto (v0.19.0-beta)
 ├── scripts/gen_proto.sh     regenerate gRPC stubs
+├── knowledge/               curated domain corpus for the M4 LLM layer
 ├── src/advisor/
 │   ├── config.py            connection settings (env / CLI overridable)
 │   ├── models.py            NodeSnapshot + typed sub-models
 │   ├── lndclient.py         read-only gRPC client (TLS + macaroon)
 │   ├── collectors/          data collectors (M0: lnd; M2: pool/loop/fees)
+│   ├── signals/             M1 signal engine (IQR dataset + engine)
 │   ├── lnrpc/               generated gRPC stubs (git-tracked)
 │   └── cli.py               `advisor` CLI
 └── tests/                   deterministic unit tests
