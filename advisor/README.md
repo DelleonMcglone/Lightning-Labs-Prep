@@ -5,10 +5,10 @@ state and gives plain-language, actionable liquidity recommendations. It never
 moves funds.
 
 > Full design in [SPEC.md](./SPEC.md). This is the reference implementation,
-> built milestone by milestone against that spec. **Current status: M1
-> (signal engine).**
+> built milestone by milestone against that spec. **Current status: M2
+> (market + fee collectors).**
 
-## What works today (M0 + M1)
+## What works today (M0–M2)
 
 - Connects to `lnd` over gRPC with a **read-only macaroon** (never `admin`).
 - Collects a typed `NodeSnapshot` — identity, balances, per-channel
@@ -20,9 +20,17 @@ moves funds.
   unit-tested against Faraday's own documented example). Private and
   too-young channels are filtered before statistics, exactly like Faraday.
 
-Market + fee collectors (M2), the recommendation engine (M3), and the LLM
-advisor (M4) follow the [roadmap](./SPEC.md#8-roadmap). The
-[knowledge base](./knowledge/) that M4 will load is drafted.
+- `advisor market` collects the live outside world (SPEC FR3/FR4), each
+  source degrading independently:
+  - **mempool fees** at 1/3/6/144-block targets (mempool.space);
+  - **Pool auction state** via a running `poold` (execution fee, open
+    duration markets, per-bucket depth, last clearing rate with APR);
+  - **Loop terms + quotes** via a running `loopd`'s REST API (Loop Out /
+    Loop In cost at a reference amount, effective %).
+
+The recommendation engine (M3) and the LLM advisor (M4) follow the
+[roadmap](./SPEC.md#8-roadmap). The [knowledge base](./knowledge/) that M4
+will load is drafted.
 
 ## Quickstart
 

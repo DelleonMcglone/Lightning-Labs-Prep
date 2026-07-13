@@ -37,6 +37,17 @@ class Settings(BaseSettings):
     macaroon_path: Optional[Path] = None
     tls_cert_path: Optional[Path] = None
 
+    # --- M2 market/fee collectors ---------------------------------------
+    # Pool: the `pool` CLI is used as the JSON interface to poold.
+    pool_bin: str = "pool"
+    # Loop: loopd's REST API (host:port) and its data dir for TLS/macaroon.
+    loop_rest_host: str = "localhost:8091"
+    loop_dir: Path = Path("/tmp/loopbuild/data")
+    # Reference amount used when asking Loop for quotes.
+    quote_amount_sat: int = 500_000
+    # mempool.space API base; derived from network if left empty.
+    mempool_api_base: str = ""
+
     @model_validator(mode="after")
     def _derive_paths(self) -> "Settings":
         self.lnddir = Path(self.lnddir).expanduser()
@@ -48,4 +59,8 @@ class Settings(BaseSettings):
             self.tls_cert_path = self.lnddir / "tls.cert"
         self.macaroon_path = Path(self.macaroon_path).expanduser()
         self.tls_cert_path = Path(self.tls_cert_path).expanduser()
+        self.loop_dir = Path(self.loop_dir).expanduser()
+        if not self.mempool_api_base:
+            prefix = "" if self.network == "mainnet" else f"/{self.network}"
+            self.mempool_api_base = f"https://mempool.space{prefix}/api"
         return self

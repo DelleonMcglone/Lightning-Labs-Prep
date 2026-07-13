@@ -7,6 +7,8 @@ and recommendation engines consume. Kept intentionally close to what lnd's
 
 from __future__ import annotations
 
+from typing import Optional
+
 from pydantic import BaseModel, computed_field
 
 
@@ -77,6 +79,81 @@ class Balances(BaseModel):
     onchain_unconfirmed: int
     ln_local: int
     ln_remote: int
+
+
+class FeeEnvironment(BaseModel):
+    """On-chain fee estimates (sat/vB) at common confirmation targets.
+
+    Keys are conf targets in blocks: 1 (fastest), 3 (~30 min), 6 (~1 h),
+    144 (~1 day / economy).
+    """
+
+    available: bool = False
+    sat_per_vb: dict[int, float] = {}
+    source: str = ""
+
+    def at_target(self, target: int) -> Optional[float]:
+        """Best estimate at or above the given conf target."""
+        candidates = [t for t in self.sat_per_vb if t >= target]
+        if candidates:
+            return self.sat_per_vb[min(candidates)]
+        return self.sat_per_vb.get(max(self.sat_per_vb)) if self.sat_per_vb else None
+
+
+class PoolDepth(BaseModel):
+    """Open interest for one lease-duration market (both tiers summed)."""
+
+    asks: int = 0
+    bids: int = 0
+    ask_units: int = 0
+    bid_units: int = 0
+
+
+class PoolMarket(BaseModel):
+    """Live Pool auction state via poold (SPEC FR3)."""
+
+    connected: bool = False
+    exec_fee_base_sat: int = 0
+    exec_fee_rate_ppm: int = 0
+    lease_durations: dict[int, str] = {}      # blocks → market state
+    next_batch_feerate_sat_kw: int = 0
+    next_batch_clear_unix: int = 0
+    depth: dict[int, PoolDepth] = {}          # blocks → open interest
+    last_clearing_rate_ppb: dict[int, int] = {}  # blocks → most recent rate
+
+
+class LoopQuote(BaseModel):
+    """A swap quote for the reference amount, in satoshis."""
+
+    amount_sat: int
+    swap_fee_sat: int = 0
+    miner_fee_sat: int = 0
+    prepay_sat: int = 0
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def total_fee_sat(self) -> int:
+        return self.swap_fee_sat + self.miner_fee_sat + self.prepay_sat
+
+
+class LoopMarket(BaseModel):
+    """Live Loop server terms + quotes via loopd (SPEC FR3)."""
+
+    connected: bool = False
+    out_min_sat: int = 0
+    out_max_sat: int = 0
+    in_min_sat: int = 0
+    in_max_sat: int = 0
+    out_quote: Optional[LoopQuote] = None
+    in_quote: Optional[LoopQuote] = None
+
+
+class MarketSnapshot(BaseModel):
+    """Everything the Advisor knows about the outside market right now."""
+
+    fees: FeeEnvironment = FeeEnvironment()
+    pool: PoolMarket = PoolMarket()
+    loop: LoopMarket = LoopMarket()
 
 
 class NodeSnapshot(BaseModel):

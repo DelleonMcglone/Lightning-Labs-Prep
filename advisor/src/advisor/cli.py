@@ -14,9 +14,10 @@ from rich.table import Table
 
 from . import __version__
 from .collectors.lnd_collector import collect_snapshot
+from .collectors.market import collect_market
 from .config import Settings
 from .lndclient import LndClient, LndClientError
-from .models import NodeSnapshot
+from .models import MarketSnapshot, NodeSnapshot
 from .signals import NodeSignals, compute_signals
 
 app = typer.Typer(
@@ -192,6 +193,89 @@ def signals(
         console.print_json(sig.model_dump_json())
     else:
         _render_signals(sig)
+
+
+def _render_market(m: MarketSnapshot, quote_amt: int) -> None:
+    # Fee environment
+    if m.fees.available:
+        fees = " · ".join(
+            f"{t}blk [b]{v:g}[/] sat/vB"
+            for t, v in sorted(m.fees.sat_per_vb.items())
+        )
+        console.print(Panel(fees, title="⛓️ Fee environment", border_style="yellow"))
+    else:
+        console.print(Panel("[dim]unavailable[/]", title="⛓️ Fee environment"))
+
+    # Pool
+    if m.pool.connected:
+        lines = [
+            f"execution fee: {m.pool.exec_fee_base_sat} sat + "
+            f"{m.pool.exec_fee_rate_ppm} ppm · next batch "
+            f"{m.pool.next_batch_feerate_sat_kw} sat/kw"
+        ]
+        tbl = Table(header_style="dim", box=None)
+        tbl.add_column("duration"); tbl.add_column("state")
+        tbl.add_column("asks/bids", justify="right")
+        tbl.add_column("units a/b", justify="right")
+        tbl.add_column("last clear", justify="right")
+        durations = sorted(set(m.pool.lease_durations) | set(m.pool.depth))
+        for d in durations:
+            dep = m.pool.depth.get(d)
+            rate = m.pool.last_clearing_rate_ppb.get(d)
+            apr = f" ≈{rate * 52_560 / 1e7:.1f}%" if rate else ""
+            tbl.add_row(
+                f"{d:,} blk",
+                m.pool.lease_durations.get(d, "—"),
+                f"{dep.asks}/{dep.bids}" if dep else "—",
+                f"{dep.ask_units}/{dep.bid_units}" if dep else "—",
+                f"{rate:,} ppb{apr}" if rate else "—",
+            )
+        console.print(Panel(tbl, title="🏊 Pool market", border_style="magenta",
+                            subtitle=lines[0]))
+    else:
+        console.print(Panel("[dim]poold not reachable — market rules will "
+                            "skip[/]", title="🏊 Pool market"))
+
+    # Loop
+    if m.loop.connected:
+        tbl = Table(header_style="dim", box=None)
+        tbl.add_column("direction"); tbl.add_column("range", justify="right")
+        tbl.add_column(f"quote @ {quote_amt:,}", justify="right")
+        tbl.add_column("effective", justify="right")
+        for label, lo, hi, q in (
+            ("Loop Out (buy inbound)", m.loop.out_min_sat, m.loop.out_max_sat,
+             m.loop.out_quote),
+            ("Loop In (buy outbound)", m.loop.in_min_sat, m.loop.in_max_sat,
+             m.loop.in_quote),
+        ):
+            eff = (f"{q.total_fee_sat / q.amount_sat:.2%}"
+                   if q and q.amount_sat else "—")
+            tbl.add_row(
+                label,
+                f"{lo:,}–{hi:,}",
+                f"{q.total_fee_sat:,} sat" if q else "—",
+                eff,
+            )
+        console.print(Panel(tbl, title="🔄 Loop market", border_style="green"))
+    else:
+        console.print(Panel("[dim]loopd not reachable — swap rules will "
+                            "skip[/]", title="🔄 Loop market"))
+
+
+@app.command()
+def market(
+    network: Optional[str] = typer.Option(None, help="bitcoin network"),
+    host: Optional[str] = typer.Option(None, help="lnd gRPC host:port"),
+    json_out: bool = typer.Option(False, "--json", help="raw JSON output"),
+) -> None:
+    """Collect live market + fee state: mempool fees, Pool auction, Loop
+    quotes (SPEC M2). Each source degrades independently."""
+    settings = _settings_from_opts(network, host)
+    m = collect_market(settings)
+    if json_out:
+        console.print_json(m.model_dump_json())
+    else:
+        _render_market(m, settings.quote_amount_sat)
 
 
 def _version_callback(value: bool) -> None:
