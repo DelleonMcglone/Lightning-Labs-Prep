@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     # mempool.space API base; derived from network if left empty.
     mempool_api_base: str = ""
 
+    # --- M4 LLM advisor ---------------------------------------------------
+    llm_model: str = "claude-sonnet-4-5"
+    llm_max_tokens: int = 2000
+
     @model_validator(mode="after")
     def _derive_paths(self) -> "Settings":
         self.lnddir = Path(self.lnddir).expanduser()

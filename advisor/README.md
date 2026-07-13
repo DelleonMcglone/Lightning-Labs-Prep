@@ -5,10 +5,10 @@ state and gives plain-language, actionable liquidity recommendations. It never
 moves funds.
 
 > Full design in [SPEC.md](./SPEC.md). This is the reference implementation,
-> built milestone by milestone against that spec. **Current status: M3
-> (deterministic recommendation engine).**
+> built milestone by milestone against that spec. **Current status: M4
+> (LLM advisor layer).**
 
-## What works today (M0–M3)
+## What works today (M0–M4)
 
 - Connects to `lnd` over gRPC with a **read-only macaroon** (never `admin`).
 - Collects a typed `NodeSnapshot` — identity, balances, per-channel
@@ -37,9 +37,23 @@ moves funds.
   (`--all` for everything); every number is unit-tested against the worked
   examples in note 04.
 
-The LLM advisor (M4) follows the [roadmap](./SPEC.md#8-roadmap). The
-[knowledge base](./knowledge/) it will load is drafted; `advisor recommend`
-is already the auditable offline baseline it must never contradict.
+- The **LLM advisor layer** (Claude) now runs by default on
+  `advisor recommend`: it re-ranks and re-phrases the deterministic report
+  in plain operator language, using the [knowledge base](./knowledge/) as
+  its system prompt. Three enforced guarantees:
+  - **privacy** — pubkeys, channel points, and the node alias are replaced
+    with stable aliases (`peer-A`, `channel-1`) before anything leaves the
+    machine (unit-tested);
+  - **the number contract** — model prose containing any figure ≥1,000
+    that the deterministic engine didn't compute is rejected, and that item
+    falls back to the engine's own summary (unit-tested);
+  - **never a dependency** — no API key / network / parse failure just
+    means the offline report, with a note. `--offline` forces it.
+
+  Set `ANTHROPIC_API_KEY` to enable; model configurable via
+  `ADVISOR_LLM_MODEL` (default `claude-sonnet-4-5`).
+
+Remaining: M5 (CLI polish, config profiles, end-to-end demo + video).
 
 ## Quickstart
 

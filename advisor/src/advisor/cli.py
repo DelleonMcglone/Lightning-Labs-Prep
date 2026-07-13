@@ -17,6 +17,7 @@ from .collectors.lnd_collector import collect_snapshot
 from .collectors.market import collect_market
 from .config import Settings
 from .lndclient import LndClient, LndClientError
+from .llm import LlmUnavailable, enhance_report
 from .models import MarketSnapshot, NodeSnapshot
 from .recommend import RecommendationReport, recommend as run_recommend
 from .signals import NodeSignals, compute_signals
@@ -327,13 +328,48 @@ def _render_report(report: RecommendationReport, top: int) -> None:
         console.print(f"[dim]skipped: {notes}[/]")
 
 
+def _render_enhanced(enh, report: RecommendationReport, top: int) -> None:
+    shown = enh.items if top <= 0 else enh.items[:top]
+    for i, item in enumerate(shown, 1):
+        r = item.rec
+        style = _SEV_STYLE.get(r.severity.name, "white")
+        body = [f"[b]{item.headline}[/]", item.narrative]
+        if item.priority_reason:
+            body.append(f"[dim]why now: {item.priority_reason}[/]")
+        econ_bits = []
+        if r.est_cost_sat is not None:
+            econ_bits.append(f"est. cost [b]{r.est_cost_sat:,} sat[/]")
+        if r.est_benefit:
+            econ_bits.append(f"benefit: {r.est_benefit}")
+        if econ_bits:
+            body.append(" · ".join(econ_bits))
+        if r.command:
+            body.append(f"[bold white on grey23] {r.command} [/]")
+        for c in r.caveats:
+            body.append(f"[dim]⚠ {c}[/]")
+        if not item.narrative_from_llm:
+            body.append("[dim](deterministic text — LLM output unavailable "
+                        "or failed the number check)[/]")
+        console.print(Panel(
+            "\n\n".join(body),
+            title=f"#{i} [{r.severity.name}] {r.title}  [dim]({r.rule})[/]",
+            border_style=style,
+        ))
+    if len(enh.items) > len(shown):
+        console.print(f"[dim]…{len(enh.items) - len(shown)} more — "
+                      "use --all to show everything.[/]")
+    if report.skipped_rules:
+        notes = " · ".join(f"{k}: {v}" for k, v in report.skipped_rules.items())
+        console.print(f"[dim]skipped: {notes}[/]")
+
+
 @app.command()
 def recommend(
     network: Optional[str] = typer.Option(None, help="bitcoin network"),
     host: Optional[str] = typer.Option(None, help="lnd gRPC host:port"),
     offline: bool = typer.Option(
-        True, "--offline/--llm",
-        help="offline = deterministic engine only (LLM layer lands in M4)",
+        False, "--offline",
+        help="skip the LLM layer; deterministic engine only",
     ),
     show_all: bool = typer.Option(
         False, "--all", help="show every recommendation, not just the top 3"
@@ -342,9 +378,11 @@ def recommend(
     json_out: bool = typer.Option(False, "--json", help="raw JSON output"),
 ) -> None:
     """Produce ranked, plain-language liquidity recommendations with computed
-    economics and ready-to-run commands (SPEC M3)."""
-    if not offline:
-        err.print("[yellow]LLM mode is milestone M4 — running offline.[/]")
+    economics and ready-to-run commands (SPEC M3+M4).
+
+    By default the LLM layer (Claude) re-ranks and explains; it falls back to
+    the deterministic report automatically when unavailable. Numbers always
+    come from the engine, never from the model."""
     settings = _settings_from_opts(network, host)
     try:
         with LndClient(settings) as client:
@@ -357,14 +395,31 @@ def recommend(
     market = collect_market(settings)
     report = run_recommend(snap, sig, market)
 
+    enhanced = None
+    mode = "deterministic engine (offline)"
+    if not offline:
+        try:
+            enhanced = enhance_report(report, sig, snap, settings)
+            mode = f"LLM advisor ({enhanced.model}) over deterministic engine"
+        except LlmUnavailable as exc:
+            err.print(f"[yellow]LLM unavailable ({exc}) — offline report.[/]")
+
     if json_out:
-        console.print_json(report.model_dump_json())
+        payload = report.model_dump()
+        if enhanced:
+            payload["llm"] = enhanced.model_dump()
+        import json as _json
+        console.print_json(_json.dumps(payload, default=str))
+        return
+
+    console.print(Panel(
+        f"[b]{report.node_alias}[/] · {mode} · "
+        f"{len(report.recommendations)} recommendation(s)",
+        title="🧭 Liquidity Advisor", border_style="magenta",
+    ))
+    if enhanced:
+        _render_enhanced(enhanced, report, top=0 if show_all else 3)
     else:
-        console.print(Panel(
-            f"[b]{report.node_alias}[/] · deterministic engine "
-            f"(offline) · {len(report.recommendations)} recommendation(s)",
-            title="🧭 Liquidity Advisor", border_style="magenta",
-        ))
         _render_report(report, top=0 if show_all else 3)
 
 
