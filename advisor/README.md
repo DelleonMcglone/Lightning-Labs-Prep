@@ -1,89 +1,141 @@
-# Lightning Liquidity Advisor
+# 🧭 Lightning Liquidity Advisor
 
-A **read-only, recommend-only** tool that reads a Lightning (`lnd`) node's actual
-state and gives plain-language, actionable liquidity recommendations. It never
-moves funds.
+**Lightning node operators struggle to know when and how to manage channel
+liquidity — the Advisor reads a node's actual state and gives plain-language,
+actionable recommendations.**
 
-> Full design in [SPEC.md](./SPEC.md). This is the reference implementation,
-> built milestone by milestone against that spec. **Current status: working
-> MVP — M0–M5 complete** (63 tests passing; user flows tested end-to-end on
-> CLI and web against the live testnet stack). Demo script: [DEMO.md](./DEMO.md).
+A **read-only, recommend-only** tool for `lnd` nodes: it collects node,
+market, and fee data; computes liquidity signals and priced recommendations
+deterministically; and uses Claude to prioritize and explain them — with the
+hard rule that **the model never does arithmetic**. It emits the exact
+command for each action; you run it. It cannot move funds.
 
-## What works today (M0–M5)
+> **Status: stable MVP** (spec milestones M0–M5 complete, 64 tests across 7
+> suites, user flows and failure modes tested live against a testnet
+> lnd + poold + loopd stack). Design record: [SPEC.md](./SPEC.md) ·
+> demo script: [DEMO.md](./DEMO.md) · LLM corpus: [knowledge/](./knowledge/).
 
-- Connects to `lnd` over gRPC with a **read-only macaroon** (never `admin`).
-- Collects a typed `NodeSnapshot` — identity, balances, per-channel
-  inbound/outbound liquidity, and 30-day forwarding history.
-- `advisor snapshot` prints it as a readable report (or `--json`).
-- `advisor signals` computes deterministic liquidity signals: per-channel
-  balance/imbalance, uptime, routing performance normalized per
-  capacity-day, and **Faraday-style IQR outlier flags** (the IQR port is
-  unit-tested against Faraday's own documented example). Private and
-  too-young channels are filtered before statistics, exactly like Faraday.
+---
 
-- `advisor market` collects the live outside world (SPEC FR3/FR4), each
-  source degrading independently:
-  - **mempool fees** at 1/3/6/144-block targets (mempool.space);
-  - **Pool auction state** via a running `poold` (execution fee, open
-    duration markets, per-bucket depth, last clearing rate with APR);
-  - **Loop terms + quotes** via a running `loopd`'s REST API (Loop Out /
-    Loop In cost at a reference amount, effective %).
+## What it does
 
-- `advisor recommend` runs the deterministic rule engine (R1–R7 from
-  SPEC §5) over signals + market + fees and emits **ranked, plain-language
-  recommendations with computed economics and ready-to-run commands** —
-  e.g. on the testnet node it correctly fires a CRITICAL "acquire inbound"
-  with a fully-priced Pool bid (premium + execution fee + chain footprint)
-  and marks Loop Out infeasible below the server minimum. Top-3 by default
-  (`--all` for everything); every number is unit-tested against the worked
-  examples in note 04.
+- **Snapshot** your node: balances and per-channel inbound/outbound (the
+  liquidity seesaw).
+- **Signals**: imbalance, uptime, routing performance per unit of committed
+  capital, and Faraday-style IQR outlier detection — statistical relativity,
+  no magic thresholds.
+- **Market awareness**: live mempool fees, the Pool auction (clearing rates,
+  depth, next-batch feerate), and Loop In/Out quotes.
+- **Recommendations (R1–R7)**: acquire inbound (Loop Out vs. Pool bid,
+  priced side by side), acquire outbound, close underperformers, rebalance,
+  retune fees, defer chain actions when fees are hot, consolidate small
+  orders — each with computed cost/benefit and a ready-to-run command.
+- **Trends**: an append-only local history powers a 7-day fee baseline and
+  an inbound **runway** rule ("you run dry in ~4 days") that fires *before*
+  the silent receive-failure, not after.
+- **Two surfaces**: a rich CLI and a local web UI with a chat panel grounded
+  in the same data.
 
-- The **LLM advisor layer** (Claude) now runs by default on
-  `advisor recommend`: it re-ranks and re-phrases the deterministic report
-  in plain operator language, using the [knowledge base](./knowledge/) as
-  its system prompt. Three enforced guarantees:
-  - **privacy** — pubkeys, channel points, and the node alias are replaced
-    with stable aliases (`peer-A`, `channel-1`) before anything leaves the
-    machine (unit-tested);
-  - **the number contract** — model prose containing any figure ≥1,000
-    that the deterministic engine didn't compute is rejected, and that item
-    falls back to the engine's own summary (unit-tested);
-  - **never a dependency** — no API key / network / parse failure just
-    means the offline report, with a note. `--offline` forces it.
+## Architecture
 
-  Set `ANTHROPIC_API_KEY` to enable; model configurable via
-  `ADVISOR_LLM_MODEL` (default `claude-sonnet-4-5`).
+Deterministic core, LLM at the edge. The first four stages are pure,
+unit-tested code; Claude only prioritizes and phrases; every number in the
+output traces back to the engine.
 
-- `advisor ingest` is the **ingestion pipeline**: one compact,
-  non-identifying JSONL record per run (node totals, send/receive
-  counters, fee tiers, Pool clearing rates, Loop quotes) appended to
-  `~/.advisor/history.jsonl` — cron-friendly (`advisor ingest --quiet`).
-  `advisor history` shows the time series and derived baselines. History
-  powers trend-aware rules:
-  - **R6 fee baseline** — after ≥3 records, today's chain fee is compared
-    against **your recorded 7-day median**, not just the intra-day spread;
-  - **R1 runway** — the inbound *trend* (sat/day, ≥3 records spanning ≥1h)
-    fires "acquire inbound" even when today's share looks healthy, if the
-    drain rate means you run dry within 7 days (CRITICAL under 3), with
-    the runway stated in the recommendation.
-- The CLI auto-loads a gitignored `.env` (see `.env.example`) so
-  `ANTHROPIC_API_KEY` never needs to live in your shell profile.
+```mermaid
+flowchart TD
+    subgraph Collect["Collectors (read-only)"]
+        LND["lnd collector<br/>gRPC + readonly macaroon"]
+        POOL["pool collector<br/>auction state via pool CLI"]
+        LOOP["loop collector<br/>quotes via loopd REST"]
+        FEE["fee collector<br/>mempool.space"]
+    end
 
-- **`advisor serve` — the web UI** (default `http://127.0.0.1:8899`):
-  recommendation views + a grounded chat, split-screen.
-  - **Views** render the deterministic engine verbatim: liquidity seesaw
-    per channel, live market tiles, severity-colored recommendation cards
-    with copyable commands and caveats. No LLM in that path.
-  - **Chat** (Claude) answers free-form questions grounded in the same
-    sanitized report + knowledge base. Commands are quoted
-    character-for-character from the report (never reconstructed), inputs
-    are privacy-filtered, and the UI states plainly: cards are
-    authoritative, chat is conversational. Without an API key the views
-    work fully and chat says it's offline.
+    LND --> SNAP["NodeSnapshot + MarketSnapshot<br/>(typed, normalized)"]
+    POOL --> SNAP
+    LOOP --> SNAP
+    FEE --> SNAP
 
-Remaining before the repo milestone closes: record the demo video
-([DEMO.md](./DEMO.md) is the script) and optionally split into its own repo.
-M6 stretch items (watch-mode, more rules) stay open.
+    SNAP --> HIST[("history.jsonl<br/>advisor ingest")]
+    HIST -->|"fee baseline ·<br/>inbound trend"| REC
+
+    SNAP --> SIG["Signal engine<br/>imbalance · uptime · IQR outliers"]
+    SIG --> REC["Recommendation engine R1–R7<br/>priced actions + exact commands"]
+
+    REC --> LLM{{"Claude layer<br/>prioritize + explain<br/>NEVER computes numbers"}}
+    REC -->|"--offline"| CLI
+
+    LLM --> CLI["CLI · advisor recommend"]
+    LLM --> WEB["Web UI · advisor serve<br/>views + grounded chat"]
+
+    classDef det fill:#0a7d5a,stroke:#0a7d5a,color:#fff;
+    classDef llm fill:#57038D,stroke:#57038D,color:#fff;
+    classDef store fill:#f7931a,stroke:#f7931a,color:#fff;
+    class SNAP,SIG,REC det;
+    class LLM llm;
+    class HIST store;
+```
+
+### Trust boundaries
+
+Everything sensitive stays on your machine. The only outbound calls are the
+public fee API and — for the optional LLM layer — a **sanitized** payload
+where every pubkey, channel point, and alias is replaced before it leaves.
+
+```mermaid
+flowchart LR
+    subgraph Local["Your machine"]
+        ADV["advisor"]
+        LNDD["lnd<br/>(readonly macaroon —<br/>no write/sign perms)"]
+        POOLD["poold"]
+        LOOPD["loopd"]
+        H[("history.jsonl<br/>no identifiers stored")]
+        ADV --> LNDD
+        ADV --> POOLD
+        ADV --> LOOPD
+        ADV --> H
+    end
+
+    POOLD --> AUC["Pool auctioneer<br/>(Lightning Labs)"]
+    LOOPD --> SWAP["Loop server<br/>(Lightning Labs)"]
+    ADV -->|"fees only"| MEM["mempool.space"]
+    ADV -->|"sanitized report:<br/>aliases, no pubkeys,<br/>no channel points"| CLAUDE["Anthropic API"]
+
+    classDef local fill:#0a7d5a,stroke:#0a7d5a,color:#fff;
+    classDef ext fill:#57038D,stroke:#57038D,color:#fff;
+    class ADV,LNDD,POOLD,LOOPD,H local;
+    class AUC,SWAP,MEM,CLAUDE ext;
+```
+
+### One `advisor recommend`, end to end
+
+```mermaid
+sequenceDiagram
+    participant U as Operator
+    participant A as advisor
+    participant L as lnd / poold / loopd / fees
+    participant C as Claude
+
+    U->>A: advisor recommend
+    A->>L: collect (read-only)
+    L-->>A: snapshot + market + history baselines
+    A->>A: signals → rules R1–R7 → priced report
+    A->>A: sanitize (aliases replace identifiers)
+    A->>C: knowledge base + sanitized report
+    C-->>A: ranking + narratives (JSON)
+    A->>A: validate: every number ≥1,000 must exist<br/>in the deterministic fact set, else fallback
+    A-->>U: ranked report — engine numbers + commands verbatim
+```
+
+### The guarantees, in one table
+
+| Guarantee | Enforced by |
+| --- | --- |
+| Cannot move funds | readonly macaroon; no write/sign RPCs imported |
+| Numbers are never invented | all math in `recommend/economics.py`, unit-tested; LLM prose validated against the fact set, rejected on mismatch |
+| Commands are exact | generated by the engine; chat quotes them character-for-character |
+| Nothing identifying leaves | privacy filter aliases pubkeys/channel points/alias before any prompt; history stores no identifiers |
+| Works without the LLM | `--offline` and key-less operation always produce the full deterministic report |
 
 ## Quickstart
 
@@ -93,46 +145,22 @@ python3 -m venv .venv && . .venv/bin/activate
 pip install -e .
 ./scripts/gen_proto.sh          # generate gRPC stubs from vendored protos
 
-# Point at your node (defaults target the local testnet lnd; all overridable)
-export ADVISOR_LND_HOST=localhost:10010
+# point at your node (defaults target a local testnet lnd)
+export ADVISOR_RPC_HOST=localhost:10010
 export ADVISOR_NETWORK=testnet
 
-advisor snapshot                # human-readable
-advisor snapshot --json         # machine-readable
+advisor snapshot                # M0: what does my node look like?
+advisor recommend               # the point of the tool
+advisor serve                   # web UI on http://127.0.0.1:8899
 ```
 
-By default the Advisor reads
-`<lnddir>/data/chain/bitcoin/<network>/readonly.macaroon` and `<lnddir>/tls.cert`.
-Override with `ADVISOR_LNDDIR`, `ADVISOR_MACAROON_PATH`, `ADVISOR_TLS_CERT_PATH`,
-or the `--network` / `--host` flags.
-
-### Least-privilege credential (recommended)
-
-Bake a scoped read-only macaroon so the Advisor is *incapable* of moving funds:
+Optional but recommended — a least-privilege credential and the LLM key:
 
 ```bash
-lncli bakemacaroon info:read offchain:read onchain:read \
-  --save_to advisor.macaroon
+lncli bakemacaroon info:read offchain:read onchain:read --save_to advisor.macaroon
 export ADVISOR_MACAROON_PATH=$PWD/advisor.macaroon
-```
 
-## Layout
-
-```
-advisor/
-├── SPEC.md                  design record (requirements, architecture, roadmap)
-├── proto/lightning.proto    vendored lnd proto (v0.19.0-beta)
-├── scripts/gen_proto.sh     regenerate gRPC stubs
-├── knowledge/               curated domain corpus for the M4 LLM layer
-├── src/advisor/
-│   ├── config.py            connection settings (env / CLI overridable)
-│   ├── models.py            NodeSnapshot + typed sub-models
-│   ├── lndclient.py         read-only gRPC client (TLS + macaroon)
-│   ├── collectors/          data collectors (M0: lnd; M2: pool/loop/fees)
-│   ├── signals/             M1 signal engine (IQR dataset + engine)
-│   ├── lnrpc/               generated gRPC stubs (git-tracked)
-│   └── cli.py               `advisor` CLI
-└── tests/                   deterministic unit tests
+cp .env.example .env            # then put ANTHROPIC_API_KEY in .env (gitignored)
 ```
 
 ## Commands
@@ -142,45 +170,82 @@ advisor/
 | `advisor snapshot` | Read-only node state: identity, balances, per-channel in/outbound |
 | `advisor signals` | Deterministic liquidity signals + IQR outlier flags (`--multiplier`) |
 | `advisor market` | Live mempool fees, Pool auction state, Loop quotes |
-| `advisor ingest` | Append one history record (`--quiet` for cron) |
+| `advisor ingest` | Append one history record (`--quiet` for cron: `0 * * * * advisor ingest --quiet`) |
 | `advisor history` | The ingested time series + fee baseline + inbound trend |
 | `advisor recommend` | Ranked recommendations with economics + commands (`--offline`, `--all`, `--json`) |
-| `advisor serve` | Local web UI: recommendation views + grounded chat (port 8899) |
+| `advisor serve` | Local web UI: recommendation views + grounded chat (`--port`, default 8899) |
 
-All commands take `--network` / `--host`; everything is overridable via
-`ADVISOR_*` env vars or `.env`.
+Every command takes `--network` / `--host`; all settings are overridable via
+`ADVISOR_*` env vars or a local `.env`.
+
+## Configuration
+
+| Setting (env) | Default | Purpose |
+| --- | --- | --- |
+| `ADVISOR_NETWORK` | `testnet` | bitcoin network |
+| `ADVISOR_RPC_HOST` | `localhost:10010` | lnd gRPC |
+| `ADVISOR_LNDDIR` | `~/Library/Application Support/Lnd-testnet` | derives macaroon + TLS paths |
+| `ADVISOR_MACAROON_PATH` | `<lnddir>/…/readonly.macaroon` | credential (read-only!) |
+| `ADVISOR_POOL_BIN` | `pool` | Pool CLI used as poold interface |
+| `ADVISOR_LOOP_REST_HOST` / `ADVISOR_LOOP_DIR` | `localhost:8091` / `/tmp/loopbuild/data` | loopd REST + auth files |
+| `ADVISOR_HISTORY_PATH` | `~/.advisor/history.jsonl` | ingestion store |
+| `ADVISOR_LLM_MODEL` | `claude-sonnet-4-5` | LLM layer model |
+| `ANTHROPIC_API_KEY` | — | enables LLM layer + chat (in `.env`) |
 
 ## Troubleshooting
 
 - **`lnd unreachable`** — is lnd running and the wallet unlocked
   (`lncli unlock`)? Check `ADVISOR_RPC_HOST` / `ADVISOR_LNDDIR`.
-- **`macaroon not found`** — the default path is
-  `<lnddir>/data/chain/bitcoin/<network>/readonly.macaroon`; set
-  `ADVISOR_MACAROON_PATH` (ideally to a baked least-privilege macaroon,
-  see above).
-- **Pool/Loop shown offline** — `poold`/`loopd` aren't running or aren't on
-  the expected ports (`ADVISOR_POOL_BIN`, `ADVISOR_LOOP_REST_HOST`,
-  `ADVISOR_LOOP_DIR`). Market-dependent rules skip gracefully and say so.
+- **`macaroon not found`** — set `ADVISOR_MACAROON_PATH` (ideally a baked
+  least-privilege macaroon, see Quickstart).
+- **Pool/Loop shown offline** — `poold`/`loopd` aren't running or are on
+  different ports. Market-dependent rules skip gracefully and say so.
 - **Chat says offline** — set `ANTHROPIC_API_KEY` in `advisor/.env`. Views
   and `--offline` recommendations never need it.
-- **Fee baseline/trend say "needs ≥3 records"** — run `advisor ingest` on a
-  schedule (`0 * * * * advisor ingest --quiet`); trends also need records
-  spanning ≥1 hour.
+- **Baseline/trend say "needs ≥3 records"** — schedule `advisor ingest`;
+  trends also need records spanning ≥1 hour.
 - **Port 8899 in use** — `advisor serve --port <other>`.
 
 ## Tests
 
 ```bash
 for t in tests/test_*.py; do PYTHONPATH=src python "$t"; done
-# (or python -m pytest if installed)
 ```
 
-## Safety
+64 deterministic tests: model math, the IQR port pinned to Faraday's
+documented examples, market parsers on captured live payloads, rule
+economics pinned to the study notes' worked examples, privacy filter and
+number contract, ingestion/trends, and the web API (including degraded
+modes). No test touches the network.
 
-The Advisor is architecturally read-only (SPEC NFR1–NFR2): it loads a macaroon
-without write/sign permissions and imports no fund-moving RPCs. It emits the
-commands to act on a recommendation; **you** run them.
+## Layout
+
+```
+advisor/
+├── SPEC.md                  design record (+ §10 as-built)
+├── DEMO.md                  5-minute demo walkthrough
+├── knowledge/               curated corpus the LLM layer loads
+├── proto/lightning.proto    vendored lnd proto (v0.19.0-beta)
+├── scripts/gen_proto.sh     regenerate gRPC stubs
+├── src/advisor/
+│   ├── config.py            settings (env/.env overridable)
+│   ├── models.py            typed snapshot + market models
+│   ├── lndclient.py         read-only gRPC client
+│   ├── collectors/          lnd · pool · loop · fees
+│   ├── signals/             IQR dataset + signal engine
+│   ├── recommend/           economics + rules R1–R7 + ranking
+│   ├── llm/                 privacy filter + Claude layer
+│   ├── history.py           ingestion store + baselines/trends
+│   ├── web/                 FastAPI server + single-file UI
+│   ├── lnrpc/               generated gRPC stubs
+│   └── cli.py               the `advisor` CLI
+└── tests/                   7 suites, 64 tests
+```
 
 ---
 
-_Part of [Lightning Labs Prep](../README.md)._
+_Part of [Lightning Labs Prep](../README.md). Built on the mechanics
+documented in the repo's [study notes](../README.md#foundations) and
+[source reviews](../README.md#source-code-analysis) (Pool, LND, Loop,
+Faraday — Faraday's recommend-only engine is the architectural blueprint).
+MIT license._
