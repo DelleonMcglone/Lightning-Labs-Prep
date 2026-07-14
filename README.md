@@ -53,8 +53,12 @@ Long-form articles explaining what I've learned:
 ### Project
 
 - **AI Liquidity Advisor** — an LLM-assisted tool that reads node state and
-  recommends liquidity actions. [Product & technical spec](./advisor/SPEC.md)
-  published; implementation to live in its own repo _(link to follow)_.
+  recommends liquidity actions. **Working MVP** in [/advisor](./advisor):
+  read-only collectors (lnd + Pool + Loop + mempool), deterministic signal
+  and recommendation engines, Claude advisory layer with a privacy filter
+  and number contract, ingestion history with trend-aware rules, CLI and a
+  local web UI with grounded chat. [Spec](./advisor/SPEC.md) ·
+  [Demo script](./advisor/DEMO.md). _(Demo video to follow.)_
 
 ---
 

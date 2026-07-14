@@ -144,6 +144,19 @@ def test_chat_grounded_and_sanitized():
     assert "web-test-node" not in sys_prompt
 
 
+
+def test_chat_empty_messages_guarded():
+    # must not hit the LLM at all — even with a factory that would fail
+    def _explode():
+        raise AssertionError("LLM must not be called for empty input")
+    client = _client(llm=_explode)
+    r = client.post("/api/chat", json={"messages": []})
+    assert r.status_code == 200
+    assert "Ask me something" in r.json()["reply"]
+    r2 = client.post("/api/chat", json={
+        "messages": [{"role": "user", "content": "   "}]})
+    assert "Ask me something" in r2.json()["reply"]
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_") and callable(fn):

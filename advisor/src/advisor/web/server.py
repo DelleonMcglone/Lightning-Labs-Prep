@@ -129,6 +129,12 @@ def create_app(
 
     @app.post("/api/chat")
     def api_chat(req: ChatRequest):
+        # Guard degenerate input before spending an API call.
+        if not req.messages or req.messages[-1].get("role") != "user" \
+                or not str(req.messages[-1].get("content", "")).strip():
+            return {"reply": "Ask me something about your node's liquidity — "
+                             "e.g. try one of the suggestions below.",
+                    "offline": False}
         if not os.environ.get("ANTHROPIC_API_KEY") and llm_client_factory is None:
             return {
                 "reply": "Chat needs an ANTHROPIC_API_KEY (see .env.example)."

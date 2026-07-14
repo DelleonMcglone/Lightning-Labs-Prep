@@ -5,10 +5,11 @@ state and gives plain-language, actionable liquidity recommendations. It never
 moves funds.
 
 > Full design in [SPEC.md](./SPEC.md). This is the reference implementation,
-> built milestone by milestone against that spec. **Current status: M4
-> (LLM advisor layer).**
+> built milestone by milestone against that spec. **Current status: working
+> MVP — M0–M5 complete** (63 tests passing; user flows tested end-to-end on
+> CLI and web against the live testnet stack). Demo script: [DEMO.md](./DEMO.md).
 
-## What works today (M0–M4)
+## What works today (M0–M5)
 
 - Connects to `lnd` over gRPC with a **read-only macaroon** (never `admin`).
 - Collects a typed `NodeSnapshot` — identity, balances, per-channel
@@ -80,7 +81,9 @@ moves funds.
     authoritative, chat is conversational. Without an API key the views
     work fully and chat says it's offline.
 
-Remaining: M5 (CLI polish, config profiles, end-to-end demo + video).
+Remaining before the repo milestone closes: record the demo video
+([DEMO.md](./DEMO.md) is the script) and optionally split into its own repo.
+M6 stretch items (watch-mode, more rules) stay open.
 
 ## Quickstart
 

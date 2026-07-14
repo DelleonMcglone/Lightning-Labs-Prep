@@ -111,10 +111,10 @@ your node's liquidity, or the market. Try a suggestion below.</div>
       <button>Loop Out vs a Pool bid — which fits me and why?</button>
       <button>What would you do first, and what does it cost?</button>
     </div>
-    <div id="composer">
+    <form id="composer">
       <input id="box" placeholder="Ask about your liquidity…" autocomplete="off">
-      <button id="send">Send</button>
-    </div>
+      <button id="send" type="submit">Send</button>
+    </form>
   </section>
 </main>
 <script>
@@ -219,8 +219,20 @@ async function send(text){
   $("#send").disabled = false; $("#box").focus();
 }
 
-$("#send").onclick = () => send($("#box").value);
-$("#box").addEventListener("keydown", e => { if(e.key === "Enter") send($("#box").value); });
+// Two Enter paths, belt and braces (found during UX testing):
+// 1) native form submit — covers real keyboards via implicit submission;
+// 2) keydown fallback — covers environments where implicit submission
+//    doesn't fire. preventDefault in (2) stops (1) from double-firing.
+$("#composer").addEventListener("submit", e => {
+  e.preventDefault();
+  send($("#box").value);
+});
+$("#box").addEventListener("keydown", e => {
+  if (e.key === "Enter" || e.keyCode === 13) {
+    e.preventDefault();
+    send($("#box").value);
+  }
+});
 document.querySelectorAll(".chips button").forEach(b => b.onclick = () => send(b.textContent));
 $("#refresh").onclick = () => loadReport(true);
 loadReport();
