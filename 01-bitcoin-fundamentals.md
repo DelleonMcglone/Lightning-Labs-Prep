@@ -20,7 +20,7 @@ hard ceiling on throughput.
 
 Because global consensus takes time, the base layer prioritizes **security and
 decentralization over speed**. It cannot scale to millions of instant, everyday
-payments (like buying coffee). This is the structural bottleneck that every Layer 2
+payments. This is the structural bottleneck that every Layer 2
 solution is trying to route around.
 
 > **⚡ Lightning connection:** Lightning doesn't try to make the base layer faster.
