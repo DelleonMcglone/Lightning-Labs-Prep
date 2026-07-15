@@ -109,7 +109,7 @@ opened at least one upstream PR — docs count.
 
 ## Your checklist
 
-- [ ] **Foundations** — notes read; seesaw + ppb→APR fluent
+- [ ] **Foundations** — notes read + ppb→APR fluent
 - [ ] **Environment** — Bitcoin Core + LND running and synced
 - [ ] **Pool** — connected to the test auctioneer; first transaction done
 - [ ] **Source** — all four repo maps read; can navigate each codebase
